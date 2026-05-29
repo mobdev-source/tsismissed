@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() { return request.auth != null; }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email'])
+        && data.uid is string
+        && data.email is string;
+    }
+
+    function isValidConversation(data) {
+      return data.keys().hasAll(['participantIds', 'participantMap'])
+        && data.participantIds is list
+        && data.participantIds.size() > 0
+        && data.participantMap is map;
+    }
+
+    function isValidMessage(data) {
+      let hasRequired = data.keys().hasAll(['senderId', 'receiverId', 'type', 'createdAt']);
+      let isText = data.type == 'text' && data.keys().hasAll(['text']) && data.text is string;
+      let isCall = data.type == 'call' && data.keys().hasAll(['callUrl', 'roomName']);
+      let validReadBy = !data.keys().hasAny(['readBy']) || data.readBy is list;
+      return hasRequired && (isText || isCall) && validReadBy;
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.auth.uid == userId
+        && isValidUser(request.resource.data)
+        && request.resource.data.uid == request.auth.uid;
+      allow update: if isSignedIn()
+        && request.auth.uid == userId
+        && isValidUser(request.resource.data)
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.diff(resource.data).affectedKeys()
+           .hasOnly(['displayName', 'photoURL', 'bio', 'initials',
+                     'status', 'displayNameLower', 'emailLower',
+                     'lastActiveAt', 'updatedAt', 'avatarPublicId']);
+
+      match /contacts/{contactId} {
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
+    }
+
+    match /conversations/{conversationId} {
+      allow get: if isSignedIn()
+        && (resource == null || request.auth.uid in resource.data.participantIds);
+      allow list: if isSignedIn()
+        && request.auth.uid in resource.data.participantIds;
+      allow create: if isSignedIn()
+        && isValidConversation(request.resource.data)
+        && request.auth.uid in request.resource.data.participantIds;
+      allow update: if isSignedIn()
+        && request.auth.uid in resource.data.participantIds
+        && request.resource.data.participantIds == resource.data.participantIds;
+
+      match /messages/{messageId} {
+        allow read: if isSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds;
+        allow create: if isSignedIn()
+          && isValidMessage(request.resource.data)
+          && request.resource.data.senderId == request.auth.uid
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds;
+        allow update: if isSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy']);
+      }
+    }
+  }
+}
