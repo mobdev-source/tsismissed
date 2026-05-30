@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { LogOut, Search, X } from "lucide-react";
 import { ThemeLogo } from "@/components/ThemeLogo";
@@ -8,6 +8,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { UserAvatar } from "@/components/UserAvatar";
 import { ContactSearch } from "@/components/ContactSearch";
 import { ConversationList } from "@/components/ConversationList";
+import { ContactRequestsPanel } from "@/components/ContactRequestsPanel";
 import { ChatHeader } from "@/components/ChatHeader";
 import { MessageList } from "@/components/MessageList";
 import { MessageInput } from "@/components/MessageInput";
@@ -23,8 +24,20 @@ import { getUserDoc } from "@/lib/firestore";
 import { signOut } from "@/lib/auth";
 import { createRoomName, buildCallUrl } from "@/lib/callProvider";
 import { sendCallMessage } from "@/lib/calls";
+import {
+  subscribeIncomingRequests,
+  acceptContactRequest,
+  declineContactRequest,
+} from "@/lib/contactRequests";
+import {
+  blockUser,
+  unblockUser,
+  subscribeBlockedUsers,
+  subscribeBlockedByUsers,
+} from "@/lib/blockedUsers";
 import type { Contact } from "@/types/contact";
 import type { Conversation } from "@/types/conversation";
+import type { ContactRequest } from "@/types/contactRequest";
 import type { CallState } from "@/types/call";
 import type { CallType } from "@/lib/callProvider";
 
@@ -42,6 +55,16 @@ export function ChatLayout() {
   const [mobileView, setMobileView] = useState<"list" | "chat">("list");
   const [callState, setCallState] = useState<CallState | null>(null);
 
+  // Session 7 — contact requests + block
+  const [pendingRequests, setPendingRequests] = useState<ContactRequest[]>([]);
+  const [blockedUids, setBlockedUids] = useState<Set<string>>(new Set());
+  const [blockedByUids, setBlockedByUids] = useState<Set<string>>(new Set());
+
+  const allBlockedUids = useMemo(
+    () => new Set([...blockedUids, ...blockedByUids]),
+    [blockedUids, blockedByUids]
+  );
+
   useEffect(() => {
     if (!user) return;
     return subscribeContacts(user.uid, setContacts);
@@ -50,6 +73,21 @@ export function ChatLayout() {
   useEffect(() => {
     if (!user) return;
     return subscribeConversations(user.uid, setConversations);
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user) return;
+    return subscribeIncomingRequests(user.uid, setPendingRequests);
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user) return;
+    return subscribeBlockedUsers(user.uid, setBlockedUids);
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user) return;
+    return subscribeBlockedByUsers(user.uid, setBlockedByUids);
   }, [user?.uid]);
 
   // Fetch profiles for conversation participants not already in the contact list
@@ -141,16 +179,60 @@ export function ChatLayout() {
     setMobileView("list");
   }
 
+  async function handleBlock(targetUid: string) {
+    if (!user) return;
+    await blockUser(user.uid, targetUid);
+    if (selectedContact?.uid === targetUid) {
+      setSelectedContact(null);
+      setSelectedConversationId(null);
+      setMobileView("list");
+    }
+  }
+
+  async function handleUnblock(targetUid: string) {
+    if (!user) return;
+    await unblockUser(user.uid, targetUid);
+  }
+
+  async function handleAcceptRequest(request: ContactRequest) {
+    if (!user) return;
+    await acceptContactRequest(user.uid, request);
+  }
+
+  async function handleDeclineRequest(request: ContactRequest) {
+    if (!user) return;
+    await declineContactRequest(user.uid, request.fromUid);
+  }
+
   if (!user) return null;
 
   const conversationMap = new Map(conversations.map((c) => [c.id, c]));
   const contactUids = new Set(contacts.map((c) => c.uid));
+
+  // Typing indicator: check if the other user has typed within the last 5 seconds
+  const activeConversation = selectedConversationId
+    ? conversationMap.get(selectedConversationId)
+    : undefined;
+  const otherTypingTs = selectedContact
+    ? (activeConversation?.typing?.[selectedContact.uid] ?? 0)
+    : 0;
+  const isOtherTyping = otherTypingTs > 0 && Date.now() - otherTypingTs < 5000;
+
   const allContacts = [
     ...contacts,
     ...foreignContacts.filter((fc) => !contactUids.has(fc.uid)),
   ];
+
+  // Filter out blocked users from conversation list
+  const visibleContacts = allContacts.filter(
+    (c) => !allBlockedUids.has(c.uid)
+  );
+
   const isSearching = searchTerm.trim().length > 0;
   const conversationIds = conversations.map((c) => c.id);
+  const selectedIsBlocked = selectedContact
+    ? allBlockedUids.has(selectedContact.uid)
+    : false;
 
   return (
     <div className="flex h-screen bg-tsismis-bg text-tsismis-text overflow-hidden transition-all duration-150">
@@ -191,21 +273,42 @@ export function ChatLayout() {
         </div>
 
         {/* Contact list or search results */}
-        <div className="flex-1 overflow-y-auto bg-tsismis-sidebar py-2">
+        <div className="flex-1 overflow-y-auto bg-tsismis-sidebar">
           {isSearching ? (
-            <ContactSearch
-              term={searchTerm}
-              currentUid={user.uid}
-              contactUids={contactUids}
-            />
+            <div className="py-2">
+              <ContactSearch
+                term={searchTerm}
+                currentUid={user.uid}
+                currentDisplayName={user.displayName ?? ""}
+                currentEmail={user.email ?? ""}
+                currentPhotoURL={user.photoURL}
+                contactUids={contactUids}
+                onOpenChat={(uid) => {
+                  const contact = allContacts.find((c) => c.uid === uid);
+                  if (contact) {
+                    setSearchTerm("");
+                    handleSelectContact(contact);
+                  }
+                }}
+              />
+            </div>
           ) : (
-            <ConversationList
-              contacts={allContacts}
-              conversationMap={conversationMap}
-              selectedConversationId={selectedConversationId}
-              currentUid={user.uid}
-              onSelect={handleSelectContact}
-            />
+            <>
+              {pendingRequests.length > 0 && (
+                <ContactRequestsPanel
+                  requests={pendingRequests}
+                  onAccept={handleAcceptRequest}
+                  onDecline={handleDeclineRequest}
+                />
+              )}
+              <ConversationList
+                contacts={visibleContacts}
+                conversationMap={conversationMap}
+                selectedConversationId={selectedConversationId}
+                currentUid={user.uid}
+                onSelect={handleSelectContact}
+              />
+            </>
           )}
         </div>
 
@@ -258,17 +361,23 @@ export function ChatLayout() {
               contact={selectedContact}
               onBack={handleBack}
               onStartCall={handleStartCall}
+              isBlocked={selectedIsBlocked}
+              onBlock={() => handleBlock(selectedContact.uid)}
+              onUnblock={() => handleUnblock(selectedContact.uid)}
             />
             <MessageList
               conversationId={selectedConversationId}
               currentUid={user.uid}
               otherUid={selectedContact.uid}
+              contactName={selectedContact.displayName}
+              isTyping={isOtherTyping}
               onJoinCall={handleJoinCall}
             />
             <MessageInput
               conversationId={selectedConversationId}
               senderId={user.uid}
               receiverId={selectedContact.uid}
+              disabled={selectedIsBlocked}
             />
           </>
         ) : (

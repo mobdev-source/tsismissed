@@ -11,6 +11,8 @@ interface MessageListProps {
   conversationId: string;
   currentUid: string;
   otherUid: string;
+  contactName?: string;
+  isTyping?: boolean;
   onJoinCall?: (callUrl: string, callType: CallType) => void;
 }
 
@@ -18,6 +20,8 @@ export function MessageList({
   conversationId,
   currentUid,
   otherUid,
+  contactName,
+  isTyping,
   onJoinCall,
 }: MessageListProps) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -75,6 +79,18 @@ export function MessageList({
           onJoinCall={onJoinCall}
         />
       ))}
+      {isTyping && (
+        <div className="flex items-center gap-2 px-1 py-1 animate-in fade-in duration-200">
+          <div className="flex gap-1 items-center bg-tsismis-surface border border-tsismis-border rounded-2xl rounded-bl-sm px-3 py-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-tsismis-muted animate-bounce [animation-delay:0ms]" />
+            <span className="w-1.5 h-1.5 rounded-full bg-tsismis-muted animate-bounce [animation-delay:150ms]" />
+            <span className="w-1.5 h-1.5 rounded-full bg-tsismis-muted animate-bounce [animation-delay:300ms]" />
+          </div>
+          <span className="text-[10px] text-tsismis-hint italic">
+            {contactName ?? "Someone"} is typing…
+          </span>
+        </div>
+      )}
       <div ref={bottomRef} />
     </div>
   );

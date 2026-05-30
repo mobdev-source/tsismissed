@@ -9,6 +9,7 @@ import {
   onSnapshot,
   writeBatch,
   arrayUnion,
+  increment,
   serverTimestamp,
 } from "firebase/firestore";
 import { db } from "./firebase";
@@ -58,6 +59,7 @@ export async function sendMessage(
     lastMessageType: "text",
     lastMessageAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
+    [`unreadFor.${receiverId}`]: increment(1),
   });
 }
 
@@ -85,22 +87,22 @@ export async function markMessagesAsRead(
   currentUid: string
 ): Promise<void> {
   const unread = messages.filter(
-    (m) =>
-      m.senderId !== currentUid && !m.readBy?.includes(currentUid)
+    (m) => m.senderId !== currentUid && !m.readBy?.includes(currentUid)
   );
 
-  if (unread.length === 0) return;
+  const convRef = doc(db, "conversations", conversationId);
 
-  const batch = writeBatch(db);
-  for (const msg of unread) {
-    const ref = doc(
-      db,
-      "conversations",
-      conversationId,
-      "messages",
-      msg.id
-    );
-    batch.update(ref, { readBy: arrayUnion(currentUid) });
+  if (unread.length > 0) {
+    const batch = writeBatch(db);
+    for (const msg of unread) {
+      const ref = doc(db, "conversations", conversationId, "messages", msg.id);
+      batch.update(ref, { readBy: arrayUnion(currentUid) });
+    }
+    await batch.commit();
   }
-  await batch.commit();
+
+  // Always reset unread counter when this conversation is viewed
+  await updateDoc(convRef, {
+    [`unreadFor.${currentUid}`]: 0,
+  });
 }

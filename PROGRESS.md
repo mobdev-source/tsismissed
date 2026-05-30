@@ -9,7 +9,7 @@ Read this file before starting any session. Update this file after completing an
 ## Project Status Summary
 
 ```
-Current Session   : Session 6 — Polish, Rules, and Deployment
+Current Session   : Session 8 — Media Messages (Images + Audio)
 Overall Status    : In Progress
 Last Updated      : 2026-05-30
 Build Status      : Passed (Next.js 16.2.6, Turbopack)
@@ -21,12 +21,16 @@ Deployment Status : Not Deployed
 ## Session Checklist
 
 ```
-[x] Session 1 — Foundation
-[x] Session 2 — Authentication and User Profile
-[x] Session 3 — Contacts and Search
-[x] Session 4 — One-on-One Chat
-[x] Session 5 — Calling Feature
-[ ] Session 6 — Polish, Rules, and Deployment
+[x] Session 1  — Foundation
+[x] Session 2  — Authentication and User Profile
+[x] Session 3  — Contacts and Search
+[x] Session 4  — One-on-One Chat
+[x] Session 5  — Calling Feature
+[x] Session 6  — Unread Counter + Typing Indicator + Emoji
+[x] Session 7  — Contact Requests + Block User
+[ ] Session 8  — Media Messages (Images + Audio)
+[ ] Session 9  — Call Status Flow (Missed / Answered / Duration)
+[ ] Session 10 — Polish, Rules, and Deployment
 ```
 
 ---
@@ -375,35 +379,227 @@ export function getIframeAllowAttribute(): string {
 
 ---
 
-## Session 6 — Polish, Rules, and Deployment
+## Session 6 — Unread Counter + Typing Indicator + Emoji
 
-**Scope:** Finish UI polish, remove non-functional controls, finalize Firestore security rules, update README, test Vercel deployment readiness, and document known limitations.
+**Scope:** Unread message badge per conversation in the sidebar, "is typing…" indicator in the active chat, and emoji support (native OS keyboard + quick-picker button).
 
-**Status:** `In Progress`
+**Status:** `Done`
 
 **Files Created or Modified:**
 
 ```
-components/ChatLayout.tsx           modified (×3 — theme header fix, empty state logo, sidebar profile footer)
-components/ThemeToggle.tsx          modified
-components/AuthForm.tsx             modified (two-column layout + contextual chat previews + 30% logo)
-app/login/page.tsx                  modified
-app/register/page.tsx               modified
-app/forgot-password/page.tsx        modified
+types/conversation.ts               modified (added unreadFor, typing fields)
+lib/messages.ts                     modified (increment unreadFor on send, reset on read)
+lib/typing.ts                       created  (setTyping, clearTyping)
+components/ConversationList.tsx     modified (unread badge + bold text for unread)
+components/MessageList.tsx          modified (isTyping + contactName props, animated dots indicator)
+components/MessageInput.tsx         modified (typing triggers, emoji quick-picker with 30 emoji)
+components/ChatLayout.tsx           modified (derive isOtherTyping, pass to MessageList)
+```
+
+**Acceptance Criteria:**
+
+```
+[x] Sidebar shows pink unread badge when contact has unread messages
+[x] Badge clears when user opens and views the conversation
+[x] Unread count uses Firestore increment() — no read-modify-write race condition
+[x] "is typing…" indicator appears when the other user is typing
+[x] Typing indicator clears on send, blur, or 3s of inactivity
+[x] Typing writes are throttled — max 1 Firestore write per 2 seconds
+[x] Emoji quick-picker opens with 30 common emoji, inserts at cursor
+[x] Native OS emoji keyboard works in the textarea (no extra config needed)
+[x] Existing chat, auth, calling, and read receipt features still work
+[x] npm run build passes
+```
+
+**Notes:**
+
+```
+- unreadFor.{uid} incremented via FieldValue.increment(1) in sendMessage.
+- Reset to 0 in markMessagesAsRead whenever the user views the conversation.
+- typing.{uid} stores Unix epoch ms of last keystroke. Receiver checks Date.now() - ts < 5000.
+- clearTyping uses deleteField() to remove the key cleanly.
+- Typing indicator disappears reactively when Firestore snapshot fires after clearTyping.
+- Stale typing (e.g. browser closed): shows for at most ~5s after last keystroke. Acceptable MVP.
+- Emoji picker is fully inline (no library). 30 hardcoded emoji in QUICK_EMOJI array.
+- npm run build passed (Next.js 16.2.6, Turbopack).
+```
+
+**Issues / Blockers:**
+
+```
+- None
+```
+
+---
+
+## Session 7 — Contact Requests + Block User
+
+**Scope:** Replace auto-add with a contact request flow. User B must accept before chat/calls are enabled. Either user can block the other to prevent messaging and calls.
+
+**Status:** `Done`
+
+**Files Created or Modified:**
+
+```
+types/contactRequest.ts             created
+types/blockedUser.ts                created
+lib/contacts.ts                     modified (added addContactByUid)
+lib/contactRequests.ts              created
+lib/blockedUsers.ts                 created
+firestore.rules                     modified (added contactRequests, blockedUsers, blockedByUsers rules)
+components/ContactRequestsPanel.tsx created
+components/SearchResultItem.tsx     modified (replaced isContact+onAdd with status+onSendRequest)
+components/ContactSearch.tsx        modified (uses sendContactRequest, checks outgoing status)
+components/ChatHeader.tsx           modified (added block/unblock menu, disabled calls when blocked)
+components/MessageInput.tsx         modified (added disabled prop)
+components/ChatLayout.tsx           modified (subscribed to requests/blocks, wired all handlers)
+```
+
+**Acceptance Criteria:**
+
+```
+[x] Clicking Add Contact sends a request instead of auto-adding
+[x] User B sees a pending request notification in the sidebar
+[x] User B can Accept or Decline the request
+[x] Only accepted contacts can send messages or start calls
+[x] Either user can block the other
+[x] Blocked user cannot send messages, media, or start calls
+[x] Blocked user does not appear as an active contact
+[x] Message input is disabled for non-accepted or blocked contacts
+[x] Call buttons are disabled for non-accepted or blocked contacts
+[x] npm run build passes
+```
+
+**Notes:**
+
+```
+- Contact requests stored at users/{toUid}/contactRequests/{fromUid} with status "pending" or "declined".
+  Accepted requests are deleted — accepted state is represented by the contact documents themselves.
+- sendContactRequest() uses setDoc (upsert) so declined users can re-send.
+- acceptContactRequest() calls addContactByUid() for both sides then deletes the request doc.
+- Block: writes to users/{blockerUid}/blockedUsers/{blockedUid} AND users/{blockedUid}/blockedByUsers/{blockerUid}
+  atomically via writeBatch. This lets either side detect the block without reading each other's private data.
+- Unblock: deletes from both subcollections atomically.
+- allBlockedUids is the union of blockedUids + blockedByUids — disables input and calls in either direction.
+- Blocked contacts filtered from ConversationList.
+- SearchResultItem shows: Added / Request Sent (clock icon) / Send Again / Add.
+- ContactSearch fetches outgoing request status per result via Promise.all (max 10 reads).
+  Local optimistic state prevents flickering after sending.
+- ChatHeader MoreVertical menu provides Block/Unblock option.
+- MessageInput shows a muted "You can't message this person." bar when disabled.
+- npm run build passed (Next.js 16.2.6, Turbopack).
+```
+
+**Issues / Blockers:**
+
+```
+- None
+```
+
+---
+
+## Session 8 — Media Messages (Images + Audio)
+
+**Scope:** Users can send images (JPG, PNG, WebP ≤5 MB) and audio clips (MP3, M4A, WebM ≤15 MB) via Cloudinary. Video deferred to Phase 2.
+
+**Status:** `Not Started`
+
+**Files Created or Modified:**
+
+```
+(pending)
+```
+
+**Acceptance Criteria:**
+
+```
+[ ] Users can attach and send images
+[ ] Users can attach and send audio clips
+[ ] Files are uploaded to Cloudinary before message is sent
+[ ] Only Cloudinary URL + metadata stored in Firestore (no base64)
+[ ] Image messages render inline in the chat bubble
+[ ] Audio messages render with a native audio player
+[ ] File type and size validated client-side before upload
+[ ] Upload progress shown during upload
+[ ] npm run build passes
+```
+
+**Notes:**
+
+```
+- Video upload is Phase 2 (free-tier upload size risk).
+- Uses existing NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME and NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET.
+- Audio upload uses /video/upload endpoint (Cloudinary treats audio as video resource_type).
+```
+
+**Issues / Blockers:**
+
+```
+-
+```
+
+---
+
+## Session 9 — Call Status Flow (Missed / Answered / Duration)
+
+**Scope:** Add call status to call messages: pending → answered/missed/ended. Show duration and missed state in the chat bubble.
+
+**Status:** `Not Started`
+
+**Files Created or Modified:**
+
+```
+(pending)
+```
+
+**Acceptance Criteria:**
+
+```
+[ ] Call messages created with callStatus: "pending"
+[ ] Receiver clicking Join marks call as "answered"
+[ ] 60s timeout marks unanswered call as "missed"
+[ ] Closing CallDialog records duration and marks call as "ended"
+[ ] Chat bubble shows "Missed audio/video call" for missed calls
+[ ] Chat bubble shows "Audio/video call ended · Xm Xs" for ended calls
+[ ] Duration is approximate (CallDialog join-to-close, client-side)
+[ ] npm run build passes
+```
+
+**Notes:**
+
+```
+- Duration measured from iframe load to dialog close. Approximate only.
+- Missed-call timeout is client-side. Known limitation: if caller closes browser, timeout is lost.
+```
+
+**Issues / Blockers:**
+
+```
+-
+```
+
+---
+
+## Session 10 — Polish, Rules, and Deployment
+
+**Scope:** Final UI polish, Firestore rules audit, README update, Vercel deployment readiness.
+
+**Status:** `Not Started`
+
+**Files Created or Modified:**
+
+```
+(pending — was previously Session 6)
 ```
 
 **Acceptance Criteria:**
 
 ```
 [ ] No visible clickable UI control is non-functional
-[ ] Kebab menus either work, are hidden, or show Coming Soon clearly
 [ ] UI is clean on desktop and mobile
-[ ] Firestore security rules protect profiles, contacts, conversations, and messages
-[ ] README explains Firebase setup
-[ ] README explains Cloudinary setup
-[ ] README explains audio call requires both &videodevice=0 and &novideo
-[ ] README explains why &novideo alone is insufficient
-[ ] README explains why receiver must click before iframe loads
+[ ] Firestore security rules protect all collections (Sessions 6–9 additions included)
+[ ] README explains Firebase, Cloudinary, and calling setup
 [ ] README documents known limitations
 [ ] npm run build passes
 [ ] Project is ready to deploy on Vercel
@@ -506,9 +702,6 @@ Notes       :
 - User search only matches from the beginning of the display name (prefix search).
   Searching "jay" will not find "Mary Jay". This is a known MVP limitation.
 
-- User B has no notification that User A added them as a contact until User A
-  sends a message. Intentional for MVP simplicity.
-
 - VDO.Ninja iframe embedding requires SSL. Handled automatically on Vercel.
   Custom domains must also have SSL enabled.
 
@@ -521,6 +714,24 @@ Notes       :
 - firestore.indexes.json is empty because Firestore automatically maintains
   single-field indexes. The displayNameLower prefix search does not need an
   explicit composite index.
+
+- Typing indicator stale state: if the typing user closes their browser without
+  clearing, the indicator may show for up to ~5 seconds. Acceptable for MVP.
+
+- Missed-call timeout (Session 9): client-side only. If the caller closes the
+  browser before the 60s timeout fires, the call stays in "pending" state.
+  Phase 2: server-side TTL or Cloud Function for reliable missed-call detection.
+
+- Video file uploads deferred to Phase 2 (Cloudinary free-tier size risk).
+
+- Group conversations, push notifications, call ringtones: Phase 2.
+
+- Block + contact request interaction: if User A blocks User B, User B can still
+  send a contact request and User A can still accept it — but User B will not appear
+  in User A's contact list until User A also unblocks them. Accepting a request does
+  not auto-unblock. To be addressed in a future refinement (e.g., prompt the user to
+  unblock when accepting a request from a blocked contact, or prevent accepting
+  requests from blocked users altogether).
 ```
 
 ---
@@ -528,10 +739,11 @@ Notes       :
 ## Next Steps
 
 ```
-- Continue Session 6: Polish, Rules, and Deployment
-  - Remove or hide any non-functional UI controls
-  - Finalize Firestore security rules
-  - Update README with Firebase, Cloudinary, and calling setup
-  - Test Vercel deployment readiness
-  - Run full two-user test log
+- Start Session 8: Media Messages (Images + Audio)
+  - Image upload (JPG, PNG, WebP ≤5 MB) via Cloudinary
+  - Audio upload (MP3, M4A, WebM ≤15 MB) via Cloudinary
+  - Inline image rendering in chat bubble
+  - Native audio player in chat bubble
+  - Client-side file type and size validation
+  - Upload progress indicator
 ```

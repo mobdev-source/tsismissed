@@ -8,6 +8,8 @@ export interface Conversation {
   lastMessage?: string;
   lastMessageType?: "text" | "call";
   lastMessageAt?: Timestamp;
+  unreadFor?: Record<string, number>;
+  typing?: Record<string, number>;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

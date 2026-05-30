@@ -1,6 +1,7 @@
 import {
   collection,
   doc,
+  getDoc,
   setDoc,
   query,
   where,
@@ -48,6 +49,15 @@ export async function addContact(
     bio: target.bio ?? "",
     addedAt: serverTimestamp(),
   });
+}
+
+export async function addContactByUid(
+  currentUid: string,
+  targetUid: string
+): Promise<void> {
+  const snap = await getDoc(doc(db, "users", targetUid));
+  if (!snap.exists()) throw new Error("User not found");
+  await addContact(currentUid, snap.data() as UserProfile);
 }
 
 export function subscribeContacts(

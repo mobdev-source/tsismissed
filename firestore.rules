@@ -48,6 +48,34 @@ service cloud.firestore {
 
       match /contacts/{contactId} {
         allow read, write: if isSignedIn() && request.auth.uid == userId;
+        // Allow User B to write themselves into User A's contacts when accepting
+        // A's request. Verified by checking A's request doc exists under B's path.
+        allow create: if isSignedIn()
+          && request.auth.uid == contactId
+          && exists(/databases/$(database)/documents/users/$(request.auth.uid)/contactRequests/$(userId));
+      }
+
+      match /contactRequests/{fromUid} {
+        // Target can read, decline (update), and delete (after accept)
+        allow read, update, delete: if isSignedIn() && request.auth.uid == userId;
+        // Sender can create and read their own sent request
+        allow create, read: if isSignedIn() && request.auth.uid == fromUid;
+        // Sender can re-send a declined request (setDoc on existing doc = update)
+        allow update: if isSignedIn()
+          && request.auth.uid == fromUid
+          && resource.data.status == 'declined'
+          && request.resource.data.status == 'pending';
+      }
+
+      match /blockedUsers/{blockedUid} {
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
+
+      match /blockedByUsers/{blockerUid} {
+        // Owner reads to know who blocked them
+        allow read: if isSignedIn() && request.auth.uid == userId;
+        // Blocker writes here via batch write from their own client
+        allow write: if isSignedIn() && request.auth.uid == blockerUid;
       }
     }
 

@@ -61,12 +61,12 @@ export function ConversationList({
       convA?.lastMessageAt?.toMillis() ??
       convA?.createdAt?.toMillis() ??
       a.addedAt?.toMillis() ??
-      0;
+      Date.now();
     const bTime =
       convB?.lastMessageAt?.toMillis() ??
       convB?.createdAt?.toMillis() ??
       b.addedAt?.toMillis() ??
-      0;
+      Date.now();
     return bTime - aTime;
   });
 
@@ -83,6 +83,7 @@ export function ConversationList({
           contact.email;
 
         const previewTime = formatPreviewTime(conversation?.lastMessageAt);
+        const unreadCount = conversation?.unreadFor?.[currentUid] ?? 0;
 
         return (
           <li
@@ -101,16 +102,25 @@ export function ConversationList({
             />
             <div className="flex-1 min-w-0">
               <div className="flex items-baseline justify-between gap-1">
-                <p className="text-sm font-semibold text-tsismis-text truncate">
+                <p className={`text-sm truncate ${unreadCount > 0 ? "font-bold text-tsismis-text" : "font-semibold text-tsismis-text"}`}>
                   {contact.displayName}
                 </p>
-                {previewTime && (
-                  <span className="text-[10px] text-tsismis-hint shrink-0 font-medium">
-                    {previewTime}
-                  </span>
-                )}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {unreadCount > 0 && (
+                    <span className="flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-tsismis-gradient text-white text-[10px] font-bold leading-none">
+                      {unreadCount > 99 ? "99+" : unreadCount}
+                    </span>
+                  )}
+                  {previewTime && (
+                    <span className={`text-[10px] font-medium ${unreadCount > 0 ? "text-tsismis-pink" : "text-tsismis-hint"}`}>
+                      {previewTime}
+                    </span>
+                  )}
+                </div>
               </div>
-              <p className="text-xs text-tsismis-muted truncate mt-0.5">{subtitle}</p>
+              <p className={`text-xs truncate mt-0.5 ${unreadCount > 0 ? "text-tsismis-text font-medium" : "text-tsismis-muted"}`}>
+                {subtitle}
+              </p>
             </div>
           </li>
         );
