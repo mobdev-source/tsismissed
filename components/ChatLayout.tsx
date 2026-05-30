@@ -15,6 +15,8 @@ import { MessageInput } from "@/components/MessageInput";
 import { CallDialog } from "@/components/CallDialog";
 import { IncomingCallToast } from "@/components/IncomingCallToast";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { EditProfilePanel } from "@/components/EditProfilePanel";
+import { ContactProfileModal } from "@/components/ContactProfileModal";
 import { subscribeContacts } from "@/lib/contacts";
 import {
   getOrCreateConversation,
@@ -40,6 +42,7 @@ import type { Conversation } from "@/types/conversation";
 import type { ContactRequest } from "@/types/contactRequest";
 import type { CallState } from "@/types/call";
 import type { CallType } from "@/lib/callProvider";
+import type { UserProfile } from "@/types/user";
 
 export function ChatLayout() {
   const { user } = useAuth();
@@ -54,6 +57,10 @@ export function ChatLayout() {
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [mobileView, setMobileView] = useState<"list" | "chat">("list");
   const [callState, setCallState] = useState<CallState | null>(null);
+
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [editProfileOpen, setEditProfileOpen] = useState(false);
+  const [contactProfileContact, setContactProfileContact] = useState<Contact | null>(null);
 
   // Session 7 — contact requests + block
   const [pendingRequests, setPendingRequests] = useState<ContactRequest[]>([]);
@@ -88,6 +95,11 @@ export function ChatLayout() {
   useEffect(() => {
     if (!user) return;
     return subscribeBlockedByUsers(user.uid, setBlockedByUids);
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user) return;
+    getUserDoc(user.uid).then(setUserProfile);
   }, [user?.uid]);
 
   // Fetch profiles for conversation participants not already in the contact list
@@ -135,6 +147,7 @@ export function ChatLayout() {
 
   async function handleStartCall(callType: CallType) {
     if (!user || !selectedConversationId || !selectedContact) return;
+    setEditProfileOpen(false);
     const roomName = createRoomName(selectedConversationId, callType);
     const callUrl = buildCallUrl(roomName, callType);
     const messageId = await sendCallMessage(
@@ -316,26 +329,32 @@ export function ChatLayout() {
 
         {/* Sidebar profile footer */}
         <div className="flex items-center justify-between px-4 py-3 border-t border-tsismis-border bg-gradient-to-b from-tsismis-sidebar to-tsismis-surface/30 shrink-0">
-          {/* Left — Avatar + Name + Online badge */}
-          <div className="flex items-center gap-2.5 min-w-0">
+          {/* Left — Avatar + Name + Online badge (clickable to edit profile) */}
+          <button
+            type="button"
+            onClick={() => setEditProfileOpen(true)}
+            title="Edit profile"
+            aria-label="Edit profile"
+            className="flex items-center gap-2.5 min-w-0 cursor-pointer hover:opacity-80 transition-opacity"
+          >
             <div className="relative shrink-0">
               <UserAvatar
-                displayName={user.displayName ?? ""}
-                photoURL={user.photoURL ?? ""}
+                displayName={userProfile?.displayName ?? user.displayName ?? ""}
+                photoURL={userProfile?.photoURL ?? user.photoURL ?? ""}
                 size={36}
               />
               {/* Online indicator dot */}
               <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-tsismis-cyan border-2 border-tsismis-sidebar" />
             </div>
-            <div className="flex flex-col min-w-0">
+            <div className="flex flex-col min-w-0 text-left">
               <span className="text-sm font-semibold text-tsismis-text truncate leading-tight">
-                {user.displayName ?? "User"}
+                {userProfile?.displayName ?? user.displayName ?? "User"}
               </span>
               <span className="text-[10px] font-medium text-tsismis-cyan leading-tight tracking-wide">
                 Online
               </span>
             </div>
-          </div>
+          </button>
           {/* Right — Controls */}
           <div className="flex items-center gap-1 shrink-0">
             <ThemeToggle />
@@ -366,6 +385,7 @@ export function ChatLayout() {
               isBlocked={selectedIsBlocked}
               onBlock={() => handleBlock(selectedContact.uid)}
               onUnblock={() => handleUnblock(selectedContact.uid)}
+              onViewProfile={() => setContactProfileContact(selectedContact)}
             />
             <MessageList
               conversationId={selectedConversationId}
@@ -414,6 +434,34 @@ export function ChatLayout() {
         currentUid={user.uid}
         onJoinCall={handleJoinCall}
       />
+
+      {/* Edit profile drawer */}
+      {userProfile && editProfileOpen && (
+        <EditProfilePanel
+          open={editProfileOpen}
+          onClose={() => setEditProfileOpen(false)}
+          userProfile={userProfile}
+          currentUserEmail={user.email ?? ""}
+          onSaved={(updated) =>
+            setUserProfile((prev) => (prev ? { ...prev, ...updated } : prev))
+          }
+        />
+      )}
+
+      {/* Contact profile modal */}
+      {contactProfileContact && (
+        <ContactProfileModal
+          contact={contactProfileContact}
+          onClose={() => setContactProfileContact(null)}
+          onStartCall={handleStartCall}
+          isBlocked={allBlockedUids.has(contactProfileContact.uid)}
+          onBlock={() => {
+            handleBlock(contactProfileContact.uid);
+            setContactProfileContact(null);
+          }}
+          onUnblock={() => handleUnblock(contactProfileContact.uid)}
+        />
+      )}
     </div>
   );
 }

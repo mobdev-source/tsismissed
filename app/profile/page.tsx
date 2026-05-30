@@ -62,9 +62,15 @@ export default function ProfilePage() {
         <div className="flex justify-center mb-3">
           <ThemeLogo variant="icon" height={40} width={40} />
         </div>
-        <h1 className="text-2xl font-bold text-tsismis-text mb-6 text-center">
+        <h1 className="text-2xl font-bold text-tsismis-text mb-2 text-center">
           {profile?.displayName ? "Edit Profile" : "Set Up Your Profile"}
         </h1>
+        {!profile?.displayName && (
+          <p className="text-sm text-tsismis-muted text-center mb-6">
+            Let&apos;s get you set up. Display name is required — avatar is optional.
+          </p>
+        )}
+        {profile?.displayName && <div className="mb-4" />}
         <div className="mb-6">
           <AvatarUploader
             currentPhotoURL={photoURL}

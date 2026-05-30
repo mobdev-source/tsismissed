@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, MoreVertical, ShieldAlert } from "lucide-react";
+import { ArrowLeft, MoreVertical, ShieldAlert, ShieldCheck } from "lucide-react";
 import { UserAvatar } from "@/components/UserAvatar";
 import { CallButton } from "@/components/CallButton";
 import type { Contact } from "@/types/contact";
@@ -14,6 +14,7 @@ interface ChatHeaderProps {
   isBlocked: boolean;
   onBlock: () => void;
   onUnblock: () => void;
+  onViewProfile: () => void;
 }
 
 export function ChatHeader({
@@ -23,6 +24,7 @@ export function ChatHeader({
   isBlocked,
   onBlock,
   onUnblock,
+  onViewProfile,
 }: ChatHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmBlock, setConfirmBlock] = useState(false);
@@ -59,19 +61,26 @@ export function ChatHeader({
         >
           <ArrowLeft size={20} />
         </button>
-        <UserAvatar
-          displayName={contact.displayName}
-          photoURL={contact.photoURL}
-          size={36}
-        />
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-tsismis-text truncate">
-            {contact.displayName}
-          </p>
-          {isBlocked && (
-            <p className="text-xs text-red-400/80 leading-none mt-0.5">Blocked</p>
-          )}
-        </div>
+        <button
+          type="button"
+          onClick={onViewProfile}
+          className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer hover:opacity-80 transition-opacity"
+          aria-label={`View ${contact.displayName}'s profile`}
+        >
+          <UserAvatar
+            displayName={contact.displayName}
+            photoURL={contact.photoURL}
+            size={36}
+          />
+          <div className="flex flex-col min-w-0 text-left">
+            <p className="text-sm font-semibold text-tsismis-text truncate">
+              {contact.displayName}
+            </p>
+            {isBlocked && (
+              <p className="text-xs text-red-400/80 leading-none mt-0.5">Blocked</p>
+            )}
+          </div>
+        </button>
         <div className="flex items-center gap-1.5 shrink-0">
           <CallButton callType="audio" onClick={onStartCall} disabled={isBlocked} />
           <CallButton callType="video" onClick={onStartCall} disabled={isBlocked} />
@@ -86,17 +95,17 @@ export function ChatHeader({
               <MoreVertical size={18} />
             </button>
             {menuOpen && (
-              <div className="absolute right-0 top-full mt-1 w-44 bg-tsismis-surface border border-tsismis-border rounded-xl shadow-xl z-30 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+              <div className="absolute right-0 top-full mt-1 w-36 bg-tsismis-surface border border-tsismis-border rounded-xl shadow-xl z-30 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
                 <button
                   type="button"
                   onClick={isBlocked ? (() => { setMenuOpen(false); onUnblock(); }) : handleBlockClick}
-                  className={`w-full text-left px-4 py-2.5 text-sm transition-colors hover:bg-white/5 cursor-pointer ${
+                  className={`w-full flex items-center gap-2 whitespace-nowrap px-4 py-2.5 text-sm transition-colors hover:bg-white/5 cursor-pointer ${
                     isBlocked ? "text-[#2DC653]" : "text-red-400"
                   }`}
                 >
                   {isBlocked
-                    ? `Unblock ${contact.displayName}`
-                    : `Block ${contact.displayName}`}
+                    ? <><ShieldCheck size={14} /> Unblock</>
+                    : <><ShieldAlert size={14} /> Block</>}
                 </button>
               </div>
             )}

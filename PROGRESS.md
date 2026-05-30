@@ -9,7 +9,7 @@ Read this file before starting any session. Update this file after completing an
 ## Project Status Summary
 
 ```
-Current Session   : Session 10 — Polish, Rules, and Deployment
+Current Session   : Session 11 — Polish, Rules, and Deployment
 Overall Status    : In Progress
 Last Updated      : 2026-05-30
 Build Status      : Passed (Next.js 16.2.6, Turbopack)
@@ -30,7 +30,8 @@ Deployment Status : Not Deployed
 [x] Session 7  — Contact Requests + Block User
 [x] Session 8  — Media Messages (Images + Audio)
 [x] Session 9  — Call Status Flow (Missed / Answered / Duration)
-[ ] Session 10 — Polish, Rules, and Deployment
+[x] Session 10 — Profile Creation and Profile Viewing
+[ ] Session 11 — Polish, Rules, and Deployment
 ```
 
 ---
@@ -621,7 +622,72 @@ firestore.rules                     modified (allow callStatus and callDuration 
 
 ---
 
-## Session 10 — Polish, Rules, and Deployment
+## Session 10 — Profile Creation and Profile Viewing
+
+**Scope:** Complete the profile experience. Make the sidebar footer clickable to edit the current user's profile in-chat. Make the chat header clickable to view a contact's profile. Fix ProfileForm and AvatarUploader to use the app's design tokens. Polish the new-user onboarding subtitle on /profile.
+
+**Status:** `Done`
+
+**Files Created or Modified:**
+
+```
+components/EditProfilePanel.tsx     created  (right-side drawer: edit current user profile in-chat)
+components/ContactProfileModal.tsx  created  (centered modal: view a contact's profile)
+components/ProfileForm.tsx          modified (replaced hardcoded gray/blue classes with tsismis-* tokens; added saveLabel prop)
+components/AvatarUploader.tsx       modified (replaced text-blue-600 with text-tsismis-pink)
+components/ChatHeader.tsx           modified (added onViewProfile prop; avatar+name wrapped in clickable button)
+components/ChatLayout.tsx           modified (fetch UserProfile from Firestore; sidebar footer clickable; wired EditProfilePanel and ContactProfileModal; handleStartCall closes edit drawer)
+app/profile/page.tsx                modified (added new-user subtitle below heading)
+```
+
+**Acceptance Criteria:**
+
+```
+[x] New user is prompted to complete profile after registration
+[x] Google sign-in user can edit display name, avatar, and bio
+[x] User profile data saved in Firestore
+[x] Avatar displays correctly or falls back to initials
+[x] Current user avatar/profile in sidebar is clickable
+[x] Clicking sidebar profile opens edit profile drawer (right-side panel)
+[x] Edit drawer shows avatar uploader, display name, bio, read-only email
+[x] Saving updates sidebar immediately without page reload
+[x] Firebase Auth displayName kept in sync after save
+[x] Clicking contact avatar/name in chat header opens their profile modal
+[x] Contact profile modal shows avatar, name, bio (no email)
+[x] Contact profile modal has audio call, video call, and block/unblock actions
+[x] Call from modal closes modal and starts call
+[x] Block from modal closes modal and clears conversation
+[x] ProfileForm and AvatarUploader render correctly in dark and light mode
+[x] Existing chat, contacts, calling, and auth features not broken
+[x] npm run build passes
+```
+
+**Notes:**
+
+```
+- UserProfile is fetched once in ChatLayout via getUserDoc(user.uid) on mount.
+  No change to AuthProvider — auth-only pages (login, register) do not carry
+  the extra Firestore fetch overhead.
+- EditProfilePanel unmounts on close (guarded with {userProfile && editProfileOpen && ...})
+  so ProfileForm always re-seeds from the latest saved values on next open.
+- Firebase Auth updateProfile() is called alongside updateUserProfile() to keep
+  Auth User.displayName in sync with Firestore, so the routing guard in app/page.tsx
+  and login page continues to work correctly.
+- handleStartCall calls setEditProfileOpen(false) to prevent z-index conflicts with CallDialog.
+- ContactProfileModal re-uses the block confirmation dialog pattern from ChatHeader.
+- No Firestore schema changes — UserProfile already had all required fields.
+- npm run build passed (Next.js 16.2.6, Turbopack).
+```
+
+**Issues / Blockers:**
+
+```
+- None
+```
+
+---
+
+## Session 11 — Polish, Rules, and Deployment
 
 **Scope:** Final UI polish, Firestore rules audit, README update, Vercel deployment readiness.
 
@@ -779,11 +845,10 @@ Notes       :
 ## Next Steps
 
 ```
-- Start Session 8: Media Messages (Images + Audio)
-  - Image upload (JPG, PNG, WebP ≤5 MB) via Cloudinary
-  - Audio upload (MP3, M4A, WebM ≤15 MB) via Cloudinary
-  - Inline image rendering in chat bubble
-  - Native audio player in chat bubble
-  - Client-side file type and size validation
-  - Upload progress indicator
+- Start Session 11: Polish, Rules, and Deployment
+  - Final UI polish pass (desktop + mobile)
+  - Firestore rules audit (Sessions 6–10 additions)
+  - README update (Firebase, Cloudinary, calling setup, known limitations)
+  - Vercel deployment readiness check
+  - npm run build passes
 ```

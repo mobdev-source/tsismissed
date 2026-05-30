@@ -38,7 +38,7 @@ export function AvatarUploader({ currentPhotoURL, displayName = "", onUpload }: 
         type="button"
         onClick={() => inputRef.current?.click()}
         disabled={uploading}
-        className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 disabled:opacity-50"
+        className="flex items-center gap-2 text-sm text-tsismis-pink hover:text-tsismis-pink/80 disabled:opacity-50 transition-colors"
       >
         {uploading ? (
           <><Loader2 size={14} className="animate-spin" /> Uploading…</>
@@ -53,7 +53,7 @@ export function AvatarUploader({ currentPhotoURL, displayName = "", onUpload }: 
         className="hidden"
         onChange={handleChange}
       />
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {error && <p className="text-xs text-red-400">{error}</p>}
     </div>
   );
 }
