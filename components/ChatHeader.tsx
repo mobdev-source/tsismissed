@@ -53,7 +53,11 @@ export function ChatHeader({
 
   return (
     <>
-      <div className="flex items-center gap-3 px-4 h-16 border-b border-tsismis-border bg-tsismis-sidebar shrink-0">
+      <div
+        className="sticky top-0 z-10 shrink-0 border-b border-tsismis-border bg-tsismis-sidebar"
+        style={{ paddingTop: "env(safe-area-inset-top)" }}
+      >
+      <div className="flex items-center gap-3 px-4 h-16">
         <button
           onClick={onBack}
           className="md:hidden p-1.5 -ml-1 rounded-full text-tsismis-muted hover:text-tsismis-text hover:bg-white/5 transition-all active:scale-[0.9]"
@@ -111,6 +115,7 @@ export function ChatHeader({
             )}
           </div>
         </div>
+      </div>
       </div>
 
       {/* Block confirmation dialog */}

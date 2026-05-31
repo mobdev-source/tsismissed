@@ -1,15 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Loader2, Eye, EyeOff } from "lucide-react";
 import { AuthForm } from "@/components/AuthForm";
+import { useAuth } from "@/components/AuthProvider";
 import { signUpWithEmail, signInWithGoogle } from "@/lib/auth";
 import { createOrUpdateUserDoc } from "@/lib/firestore";
 
 export default function RegisterPage() {
   const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -17,6 +19,19 @@ export default function RegisterPage() {
   const [error, setError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+
+  useEffect(() => {
+    if (authLoading || !user) return;
+    router.replace("/chat");
+  }, [user, authLoading, router]);
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 size={32} className="animate-spin text-tsismis-pink" />
+      </div>
+    );
+  }
 
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault();
