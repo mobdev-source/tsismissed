@@ -11,7 +11,7 @@ import type { CallType } from "@/lib/callProvider";
 export async function sendCallMessage(
   conversationId: string,
   senderId: string,
-  receiverId: string,
+  recipientIds: string[],
   callType: CallType,
   callUrl: string,
   roomName: string
@@ -20,7 +20,7 @@ export async function sendCallMessage(
     collection(db, "conversations", conversationId, "messages"),
     {
       senderId,
-      receiverId,
+      receiverId: recipientIds.length === 1 ? recipientIds[0] : "",
       type: "call",
       callType,
       callUrl,

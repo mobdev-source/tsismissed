@@ -2,6 +2,7 @@
 
 import { Sparkles } from "lucide-react";
 import { UserAvatar } from "@/components/UserAvatar";
+import { GroupAvatar } from "@/components/GroupAvatar";
 import { getConversationId } from "@/lib/conversations";
 import type { Contact } from "@/types/contact";
 import type { Conversation } from "@/types/conversation";
@@ -13,8 +14,13 @@ interface ConversationListProps {
   selectedConversationId: string | null;
   currentUid: string;
   onSelect: (contact: Contact) => void;
+  onSelectGroup: (conversation: Conversation) => void;
   loading?: boolean;
 }
+
+type Row =
+  | { key: string; kind: "direct"; contact: Contact; conversation?: Conversation; sortTime: number }
+  | { key: string; kind: "group"; conversation: Conversation; sortTime: number };
 
 function formatPreviewTime(timestamp: Timestamp | null | undefined): string {
   if (!timestamp) return "";
@@ -58,13 +64,16 @@ export function ConversationList({
   selectedConversationId,
   currentUid,
   onSelect,
+  onSelectGroup,
   loading,
 }: ConversationListProps) {
   if (loading) {
     return <ConversationSkeleton />;
   }
 
-  if (contacts.length === 0) {
+  const groups = [...conversationMap.values()].filter((c) => c.type === "group");
+
+  if (contacts.length === 0 && groups.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center px-6 py-12 text-center select-none">
         <Sparkles size={40} className="text-tsismis-hint mb-3 animate-pulse duration-1000" />
@@ -76,53 +85,84 @@ export function ConversationList({
     );
   }
 
-  const sorted = [...contacts].sort((a, b) => {
-    const convA = conversationMap.get(getConversationId(currentUid, a.uid));
-    const convB = conversationMap.get(getConversationId(currentUid, b.uid));
-    const aTime =
-      convA?.lastMessageAt?.toMillis() ??
-      convA?.createdAt?.toMillis() ??
-      a.addedAt?.toMillis() ??
-      Date.now();
-    const bTime =
-      convB?.lastMessageAt?.toMillis() ??
-      convB?.createdAt?.toMillis() ??
-      b.addedAt?.toMillis() ??
-      Date.now();
-    return bTime - aTime;
-  });
+  const rows: Row[] = [];
+
+  for (const contact of contacts) {
+    const conversation = conversationMap.get(
+      getConversationId(currentUid, contact.uid)
+    );
+    rows.push({
+      key: `direct-${contact.uid}`,
+      kind: "direct",
+      contact,
+      conversation,
+      sortTime:
+        conversation?.lastMessageAt?.toMillis() ??
+        conversation?.createdAt?.toMillis() ??
+        contact.addedAt?.toMillis() ??
+        Date.now(),
+    });
+  }
+
+  for (const conversation of groups) {
+    rows.push({
+      key: `group-${conversation.id}`,
+      kind: "group",
+      conversation,
+      sortTime:
+        conversation.lastMessageAt?.toMillis() ??
+        conversation.createdAt?.toMillis() ??
+        0,
+    });
+  }
+
+  rows.sort((a, b) => b.sortTime - a.sortTime);
 
   return (
     <ul className="space-y-0.5">
-      {sorted.map((contact) => {
-        const conversationId = getConversationId(currentUid, contact.uid);
-        const conversation = conversationMap.get(conversationId);
+      {rows.map((row) => {
+        const conversation =
+          row.kind === "direct" ? row.conversation : row.conversation;
+        const conversationId =
+          row.kind === "direct"
+            ? getConversationId(currentUid, row.contact.uid)
+            : row.conversation.id;
         const isSelected = selectedConversationId === conversationId;
 
         const lastMessage = conversation?.lastMessage?.trim() || null;
-
         const previewTime = formatPreviewTime(conversation?.lastMessageAt);
         const unreadCount = conversation?.unreadFor?.[currentUid] ?? 0;
 
+        const title =
+          row.kind === "direct" ? row.contact.displayName : row.conversation.name ?? "Group";
+
         return (
           <li
-            key={contact.uid}
-            onClick={() => onSelect(contact)}
+            key={row.key}
+            onClick={() =>
+              row.kind === "direct"
+                ? onSelect(row.contact)
+                : onSelectGroup(row.conversation)
+            }
             className={`flex items-center gap-3 p-3 cursor-pointer transition-all duration-150 rounded-xl mx-2 my-0.5 border ${
               isSelected
                 ? "bg-active-item border-l-[3px] border-l-tsismis-pink border-y-transparent border-r-transparent"
                 : "hover:bg-white/5 border-transparent hover:border-tsismis-border"
             }`}
           >
-            <UserAvatar
-              displayName={contact.displayName}
-              photoURL={contact.photoURL}
-              size={40}
-            />
+            {row.kind === "direct" ? (
+              <UserAvatar
+                displayName={row.contact.displayName}
+                photoURL={row.contact.photoURL}
+                size={40}
+              />
+            ) : (
+              <GroupAvatar photoURL={row.conversation.photoURL} size={40} />
+            )}
             <div className="flex-1 min-w-0">
               <div className="flex items-baseline justify-between gap-1">
                 <p className={`text-sm truncate ${unreadCount > 0 ? "font-bold text-tsismis-text" : "font-semibold text-tsismis-text"}`}>
-                  {contact.displayName}
+                  {title}
                 </p>
                 <div className="flex items-center gap-1.5 shrink-0">
                   {unreadCount > 0 && (
@@ -143,7 +183,9 @@ export function ConversationList({
                     {lastMessage}
                   </span>
                 ) : (
-                  <span className="text-tsismis-hint italic">Say hi!</span>
+                  <span className="text-tsismis-hint italic">
+                    {row.kind === "group" ? "Say hi to the group!" : "Say hi!"}
+                  </span>
                 )}
               </p>
             </div>

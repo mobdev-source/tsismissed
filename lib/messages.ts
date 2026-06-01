@@ -12,8 +12,57 @@ import {
   increment,
   serverTimestamp,
 } from "firebase/firestore";
+import type { Query, QuerySnapshot, DocumentData } from "firebase/firestore";
 import { db } from "./firebase";
 import type { Message } from "@/types/message";
+
+// The messages read rule is document-independent — it only does
+// get(parentConversation).participantIds — so Firestore evaluates it the moment
+// we subscribe, even on an empty subcollection. Right after a conversation is
+// created (always the case for a new group), that server-side get() can briefly
+// miss the freshly written parent on the serving replica and return
+// permission-denied, which permanently terminates the listener. We retry a few
+// times with a short backoff so the listener self-heals once the parent has
+// propagated, instead of dying and logging "Uncaught Error in snapshot listener".
+const TRANSIENT_CODES = new Set(["permission-denied", "unavailable"]);
+const MAX_RESUBSCRIBE_ATTEMPTS = 6;
+
+function subscribeWithRetry(
+  buildQuery: () => Query<DocumentData>,
+  onResult: (snap: QuerySnapshot<DocumentData>) => void
+): () => void {
+  let unsub: () => void = () => {};
+  let stopped = false;
+  let attempts = 0;
+
+  function start() {
+    if (stopped) return;
+    unsub = onSnapshot(
+      buildQuery(),
+      (snap) => {
+        attempts = 0;
+        onResult(snap);
+      },
+      (err) => {
+        const code = (err as { code?: string }).code ?? "";
+        if (
+          !stopped &&
+          TRANSIENT_CODES.has(code) &&
+          attempts < MAX_RESUBSCRIBE_ATTEMPTS
+        ) {
+          attempts += 1;
+          setTimeout(start, 300 * attempts);
+        }
+      }
+    );
+  }
+
+  start();
+  return () => {
+    stopped = true;
+    unsub();
+  };
+}
 
 export function subscribeMessages(
   conversationId: string,
@@ -22,24 +71,36 @@ export function subscribeMessages(
   // desc + limit keeps the window anchored to the newest messages so real-time
   // updates always land inside the limit. Results are reversed before delivery
   // so the UI sees oldest-first order.
-  const q = query(
-    collection(db, "conversations", conversationId, "messages"),
-    orderBy("createdAt", "desc"),
-    limit(50)
+  return subscribeWithRetry(
+    () =>
+      query(
+        collection(db, "conversations", conversationId, "messages"),
+        orderBy("createdAt", "desc"),
+        limit(50)
+      ),
+    (snap) => {
+      const messages = snap.docs
+        .map((d) => ({ id: d.id, ...(d.data() as Omit<Message, "id">) }))
+        .reverse();
+      cb(messages);
+    }
   );
+}
 
-  return onSnapshot(q, (snap) => {
-    const messages = snap.docs
-      .map((d) => ({ id: d.id, ...(d.data() as Omit<Message, "id">) }))
-      .reverse();
-    cb(messages);
-  });
+// Build the per-recipient unread increment map for a conversation update.
+// Direct chats pass a single recipient; group chats pass all non-senders.
+function unreadIncrements(recipientIds: string[]): Record<string, ReturnType<typeof increment>> {
+  const updates: Record<string, ReturnType<typeof increment>> = {};
+  for (const uid of recipientIds) {
+    updates[`unreadFor.${uid}`] = increment(1);
+  }
+  return updates;
 }
 
 export async function sendMessage(
   conversationId: string,
   senderId: string,
-  receiverId: string,
+  recipientIds: string[],
   text: string
 ): Promise<void> {
   const trimmed = text.trim();
@@ -48,7 +109,8 @@ export async function sendMessage(
     collection(db, "conversations", conversationId, "messages"),
     {
       senderId,
-      receiverId,
+      // Single recipient (direct) keeps a real receiverId; groups use "".
+      receiverId: recipientIds.length === 1 ? recipientIds[0] : "",
       type: "text",
       text: trimmed,
       createdAt: serverTimestamp(),
@@ -61,7 +123,7 @@ export async function sendMessage(
     lastMessageType: "text",
     lastMessageAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-    [`unreadFor.${receiverId}`]: increment(1),
+    ...unreadIncrements(recipientIds),
   });
 }
 
@@ -69,24 +131,27 @@ export function subscribeLatestMessages(
   conversationId: string,
   cb: (messages: Message[]) => void
 ): () => void {
-  const q = query(
-    collection(db, "conversations", conversationId, "messages"),
-    orderBy("createdAt", "desc"),
-    limit(5)
+  return subscribeWithRetry(
+    () =>
+      query(
+        collection(db, "conversations", conversationId, "messages"),
+        orderBy("createdAt", "desc"),
+        limit(5)
+      ),
+    (snap) => {
+      const messages = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<Message, "id">),
+      }));
+      cb(messages);
+    }
   );
-  return onSnapshot(q, (snap) => {
-    const messages = snap.docs.map((d) => ({
-      id: d.id,
-      ...(d.data() as Omit<Message, "id">),
-    }));
-    cb(messages);
-  });
 }
 
 export async function sendMediaMessage(
   conversationId: string,
   senderId: string,
-  receiverId: string,
+  recipientIds: string[],
   type: "image" | "audio",
   mediaUrl: string,
   mediaPublicId: string,
@@ -96,7 +161,7 @@ export async function sendMediaMessage(
     collection(db, "conversations", conversationId, "messages"),
     {
       senderId,
-      receiverId,
+      receiverId: recipientIds.length === 1 ? recipientIds[0] : "",
       type,
       mediaUrl,
       mediaPublicId,
@@ -113,7 +178,7 @@ export async function sendMediaMessage(
     lastMessageType: "text",
     lastMessageAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-    [`unreadFor.${receiverId}`]: increment(1),
+    ...unreadIncrements(recipientIds),
   });
 }
 

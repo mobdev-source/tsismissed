@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { LogOut, Search, X } from "lucide-react";
+import { LogOut, Search, X, Plus } from "lucide-react";
 import { ThemeLogo } from "@/components/ThemeLogo";
 import { useAuth } from "@/components/AuthProvider";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -21,9 +21,14 @@ import { IncomingCallToast } from "@/components/IncomingCallToast";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { EditProfilePanel } from "@/components/EditProfilePanel";
 import { ContactProfileModal } from "@/components/ContactProfileModal";
+import { CreateGroupModal } from "@/components/CreateGroupModal";
+import { GroupInfoModal } from "@/components/GroupInfoModal";
 import { subscribeContacts } from "@/lib/contacts";
 import {
   getOrCreateConversation,
+  createGroupConversation,
+  updateGroupAvatar,
+  leaveGroup,
   subscribeConversations,
 } from "@/lib/conversations";
 import { getUserDoc } from "@/lib/firestore";
@@ -60,12 +65,18 @@ export function ChatLayout() {
     string | null
   >(null);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<Conversation | null>(null);
+  const [participantProfiles, setParticipantProfiles] = useState<
+    Map<string, UserProfile>
+  >(new Map());
   const [mobileView, setMobileView] = useState<"list" | "chat">("list");
   const [callState, setCallState] = useState<CallState | null>(null);
 
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [editProfileOpen, setEditProfileOpen] = useState(false);
   const [contactProfileContact, setContactProfileContact] = useState<Contact | null>(null);
+  const [createGroupOpen, setCreateGroupOpen] = useState(false);
+  const [groupInfoOpen, setGroupInfoOpen] = useState(false);
 
   // Session 7 — contact requests + block
   const [pendingRequests, setPendingRequests] = useState<ContactRequest[]>([]);
@@ -118,6 +129,9 @@ export function ChatLayout() {
     const foreignUids = [
       ...new Set(
         conversations
+          // Only direct conversations surface a counterpart in the sidebar.
+          // Group members must not become phantom direct-chat rows.
+          .filter((conv) => conv.type !== "group")
           .flatMap((conv) => conv.participantIds)
           .filter((uid) => uid !== user.uid && !contactUidSet.has(uid))
       ),
@@ -145,23 +159,110 @@ export function ChatLayout() {
       .catch(() => {});
   }, [conversations, contacts, user?.uid]);
 
+  // Stable key for the open group's membership — re-fetch profiles only when it changes
+  const openGroupConv = selectedConversationId
+    ? conversations.find((c) => c.id === selectedConversationId) ?? selectedGroup
+    : null;
+  const groupMembersKey =
+    openGroupConv?.type === "group" ? openGroupConv.participantIds.join(",") : "";
+
+  // Fetch member profiles for the open group (sender names, member list, typing)
+  useEffect(() => {
+    if (!user || !groupMembersKey) {
+      setParticipantProfiles(new Map());
+      return;
+    }
+    let cancelled = false;
+    const uids = groupMembersKey.split(",");
+    Promise.all(uids.map((uid) => getUserDoc(uid)))
+      .then((profiles) => {
+        if (cancelled) return;
+        const map = new Map<string, UserProfile>();
+        for (const p of profiles) {
+          if (p) map.set(p.uid, p);
+        }
+        setParticipantProfiles(map);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [groupMembersKey, user?.uid]);
+
   async function handleSelectContact(contact: Contact) {
     if (!user) return;
     const conversation = await getOrCreateConversation(user.uid, contact.uid);
+    setSelectedGroup(null);
     setSelectedConversationId(conversation.id);
     setSelectedContact(contact);
     setMobileView("chat");
   }
 
+  function handleSelectGroup(conversation: Conversation) {
+    setSelectedGroup(conversation);
+    setSelectedContact(null);
+    setSelectedConversationId(conversation.id);
+    setMobileView("chat");
+  }
+
+  async function handleCreateGroup(
+    name: string,
+    memberUids: string[],
+    photoURL?: string,
+    avatarPublicId?: string
+  ) {
+    if (!user) return;
+    const conversation = await createGroupConversation(
+      user.uid,
+      memberUids,
+      name,
+      photoURL,
+      avatarPublicId
+    );
+    setCreateGroupOpen(false);
+    handleSelectGroup(conversation);
+  }
+
+  async function handleUpdateGroupAvatar(
+    photoURL: string,
+    avatarPublicId: string
+  ) {
+    if (!selectedConversationId) return;
+    await updateGroupAvatar(selectedConversationId, photoURL, avatarPublicId);
+    // Reflect immediately on the selected-group fallback object so the header
+    // and modal update before the next snapshot lands.
+    setSelectedGroup((prev) =>
+      prev ? { ...prev, photoURL, avatarPublicId } : prev
+    );
+  }
+
+  async function handleLeaveGroup() {
+    if (!user || !selectedConversationId) return;
+    await leaveGroup(selectedConversationId, user.uid);
+    setGroupInfoOpen(false);
+    setSelectedGroup(null);
+    setSelectedContact(null);
+    setSelectedConversationId(null);
+    setMobileView("list");
+  }
+
   async function handleStartCall(callType: CallType) {
-    if (!user || !selectedConversationId || !selectedContact) return;
+    if (!user || !selectedConversationId) return;
+    const conv = conversations.find((c) => c.id === selectedConversationId);
+    const recipientIds = conv
+      ? conv.participantIds.filter((u) => u !== user.uid)
+      : selectedContact
+      ? [selectedContact.uid]
+      : [];
+    if (recipientIds.length === 0) return;
     setEditProfileOpen(false);
+    setGroupInfoOpen(false);
     const roomName = createRoomName(selectedConversationId, callType);
     const callUrl = buildCallUrl(roomName, callType);
     const messageId = await sendCallMessage(
       selectedConversationId,
       user.uid,
-      selectedContact.uid,
+      recipientIds,
       callType,
       callUrl,
       roomName
@@ -232,14 +333,55 @@ export function ChatLayout() {
   const conversationMap = new Map(conversations.map((c) => [c.id, c]));
   const contactUids = new Set(contacts.map((c) => c.uid));
 
-  // Typing indicator: check if the other user has typed within the last 5 seconds
+  // Active conversation — prefer the live (subscribed) copy, fall back to the
+  // just-selected group object so the panel renders before the snapshot lands.
   const activeConversation = selectedConversationId
-    ? conversationMap.get(selectedConversationId)
+    ? conversationMap.get(selectedConversationId) ?? selectedGroup ?? undefined
     : undefined;
-  const otherTypingTs = selectedContact
-    ? (activeConversation?.typing?.[selectedContact.uid] ?? 0)
-    : 0;
-  const isOtherTyping = otherTypingTs > 0 && Date.now() - otherTypingTs < 5000;
+  const activeIsGroup = activeConversation?.type === "group";
+
+  // Everyone except the current user. Drives recipients and "Seen by all".
+  const otherUids = activeConversation
+    ? activeConversation.participantIds.filter((u) => u !== user.uid)
+    : selectedContact
+    ? [selectedContact.uid]
+    : [];
+
+  // Info map for sender identity in group bubbles. Seed from the names cached on
+  // the conversation doc (instant, no fetch), then overlay the freshest live
+  // profiles so renamed members update once their fetch lands.
+  const participantsInfo = new Map<
+    string,
+    { displayName: string; photoURL?: string }
+  >();
+  if (activeConversation?.participantInfo) {
+    for (const [uid, info] of Object.entries(activeConversation.participantInfo)) {
+      participantsInfo.set(uid, {
+        displayName: info.displayName,
+        photoURL: info.photoURL,
+      });
+    }
+  }
+  for (const [uid, p] of participantProfiles) {
+    participantsInfo.set(uid, { displayName: p.displayName, photoURL: p.photoURL });
+  }
+
+  // Typing indicator: first participant (not us) active within the last 5 seconds
+  let isOtherTyping = false;
+  let typingName: string | undefined;
+  if (activeConversation?.typing) {
+    const now = Date.now();
+    for (const [uid, ts] of Object.entries(activeConversation.typing)) {
+      if (uid === user.uid) continue;
+      if (typeof ts === "number" && now - ts < 5000) {
+        isOtherTyping = true;
+        typingName = activeIsGroup
+          ? participantsInfo.get(uid)?.displayName ?? "Someone"
+          : selectedContact?.displayName;
+        break;
+      }
+    }
+  }
 
   const allContacts = [
     ...contacts,
@@ -324,12 +466,22 @@ export function ChatLayout() {
                   onDecline={handleDeclineRequest}
                 />
               )}
+              <div className="px-3 pt-2 pb-1">
+                <button
+                  type="button"
+                  onClick={() => setCreateGroupOpen(true)}
+                  className="w-full flex items-center justify-center gap-2 py-2 rounded-xl border border-dashed border-tsismis-border text-sm font-semibold text-tsismis-muted hover:text-tsismis-text hover:border-tsismis-pink/50 hover:bg-white/5 active:scale-[0.98] transition-all cursor-pointer"
+                >
+                  <Plus size={16} /> New Group
+                </button>
+              </div>
               <ConversationList
                 contacts={visibleContacts}
                 conversationMap={conversationMap}
                 selectedConversationId={selectedConversationId}
                 currentUid={user.uid}
                 onSelect={handleSelectContact}
+                onSelectGroup={handleSelectGroup}
                 loading={contactsLoading}
               />
             </>
@@ -385,30 +537,45 @@ export function ChatLayout() {
           mobileView === "list" ? "hidden md:flex" : "flex"
         }`}
       >
-        {selectedConversationId && selectedContact ? (
+        {selectedConversationId && (activeIsGroup || selectedContact) ? (
           <>
-            <ChatHeader
-              contact={selectedContact}
-              onBack={handleBack}
-              onStartCall={handleStartCall}
-              isBlocked={selectedIsBlocked}
-              onBlock={() => handleBlock(selectedContact.uid)}
-              onUnblock={() => handleUnblock(selectedContact.uid)}
-              onViewProfile={() => setContactProfileContact(selectedContact)}
-            />
+            {activeIsGroup ? (
+              <ChatHeader
+                group={{
+                  name: activeConversation?.name ?? "Group",
+                  memberCount: activeConversation?.participantIds.length ?? 0,
+                  photoURL: activeConversation?.photoURL,
+                }}
+                onBack={handleBack}
+                onStartCall={handleStartCall}
+                onViewProfile={() => setGroupInfoOpen(true)}
+              />
+            ) : (
+              <ChatHeader
+                contact={selectedContact!}
+                onBack={handleBack}
+                onStartCall={handleStartCall}
+                isBlocked={selectedIsBlocked}
+                onBlock={() => handleBlock(selectedContact!.uid)}
+                onUnblock={() => handleUnblock(selectedContact!.uid)}
+                onViewProfile={() => setContactProfileContact(selectedContact)}
+              />
+            )}
             <MessageList
               conversationId={selectedConversationId}
               currentUid={user.uid}
-              otherUid={selectedContact.uid}
-              contactName={selectedContact.displayName}
+              otherUids={otherUids}
+              isGroup={activeIsGroup}
+              participants={participantsInfo}
+              typingName={typingName}
               isTyping={isOtherTyping}
               onJoinCall={handleJoinCall}
             />
             <MessageInput
               conversationId={selectedConversationId}
               senderId={user.uid}
-              receiverId={selectedContact.uid}
-              disabled={selectedIsBlocked}
+              recipientIds={otherUids}
+              disabled={!activeIsGroup && selectedIsBlocked}
             />
           </>
         ) : (
@@ -469,6 +636,39 @@ export function ChatLayout() {
             setContactProfileContact(null);
           }}
           onUnblock={() => handleUnblock(contactProfileContact.uid)}
+        />
+      )}
+
+      {/* Create group modal */}
+      {createGroupOpen && (
+        <CreateGroupModal
+          contacts={visibleContacts}
+          onClose={() => setCreateGroupOpen(false)}
+          onCreate={handleCreateGroup}
+        />
+      )}
+
+      {/* Group info modal */}
+      {groupInfoOpen && activeIsGroup && activeConversation && (
+        <GroupInfoModal
+          name={activeConversation.name ?? "Group"}
+          photoURL={activeConversation.photoURL}
+          members={activeConversation.participantIds.map((uid) => {
+            const info = participantsInfo.get(uid);
+            return {
+              uid,
+              displayName:
+                uid === user.uid
+                  ? userProfile?.displayName ?? user.displayName ?? "You"
+                  : info?.displayName ?? "Member",
+              photoURL: info?.photoURL,
+            };
+          })}
+          currentUid={user.uid}
+          onClose={() => setGroupInfoOpen(false)}
+          onStartCall={handleStartCall}
+          onLeave={handleLeaveGroup}
+          onUpdateAvatar={handleUpdateGroupAvatar}
         />
       )}
     </div>

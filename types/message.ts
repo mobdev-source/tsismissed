@@ -4,7 +4,7 @@ export interface Message {
   id: string;
   senderId: string;
   receiverId: string;
-  type: "text" | "call" | "image" | "audio";
+  type: "text" | "call" | "image" | "audio" | "system";
   text?: string;
   callType?: "audio" | "video";
   callUrl?: string;

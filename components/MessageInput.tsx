@@ -21,14 +21,14 @@ const QUICK_EMOJI = [
 interface MessageInputProps {
   conversationId: string;
   senderId: string;
-  receiverId: string;
+  recipientIds: string[];
   disabled?: boolean;
 }
 
 export function MessageInput({
   conversationId,
   senderId,
-  receiverId,
+  recipientIds,
   disabled = false,
 }: MessageInputProps) {
   const [text, setText] = useState("");
@@ -114,7 +114,7 @@ export function MessageInput({
     setUploadProgress(0);
     try {
       const { url, publicId } = await uploadMedia(file, resourceType, setUploadProgress);
-      await sendMediaMessage(conversationId, senderId, receiverId, msgType, url, publicId, file.type);
+      await sendMediaMessage(conversationId, senderId, recipientIds, msgType, url, publicId, file.type);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Upload failed. Please try again.";
       console.error("[uploadMedia]", err);
@@ -162,7 +162,7 @@ export function MessageInput({
     setSending(true);
     setError(null);
     try {
-      await sendMessage(conversationId, senderId, receiverId, trimmed);
+      await sendMessage(conversationId, senderId, recipientIds, trimmed);
       setText("");
       textareaRef.current?.focus();
     } catch {

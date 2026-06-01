@@ -3,25 +3,34 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, MoreVertical, ShieldAlert, ShieldCheck } from "lucide-react";
 import { UserAvatar } from "@/components/UserAvatar";
+import { GroupAvatar } from "@/components/GroupAvatar";
 import { CallButton } from "@/components/CallButton";
 import type { Contact } from "@/types/contact";
 import type { CallType } from "@/lib/callProvider";
 
+interface GroupHeaderInfo {
+  name: string;
+  memberCount: number;
+  photoURL?: string;
+}
+
 interface ChatHeaderProps {
-  contact: Contact;
+  contact?: Contact;
+  group?: GroupHeaderInfo;
   onBack: () => void;
   onStartCall: (callType: CallType) => void;
-  isBlocked: boolean;
-  onBlock: () => void;
-  onUnblock: () => void;
+  isBlocked?: boolean;
+  onBlock?: () => void;
+  onUnblock?: () => void;
   onViewProfile: () => void;
 }
 
 export function ChatHeader({
   contact,
+  group,
   onBack,
   onStartCall,
-  isBlocked,
+  isBlocked = false,
   onBlock,
   onUnblock,
   onViewProfile,
@@ -48,8 +57,11 @@ export function ChatHeader({
 
   function handleConfirmBlock() {
     setConfirmBlock(false);
-    onBlock();
+    onBlock?.();
   }
+
+  const isGroup = !!group;
+  const title = isGroup ? group!.name : contact?.displayName ?? "";
 
   return (
     <>
@@ -69,51 +81,63 @@ export function ChatHeader({
           type="button"
           onClick={onViewProfile}
           className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer hover:opacity-80 transition-opacity"
-          aria-label={`View ${contact.displayName}'s profile`}
+          aria-label={isGroup ? `View ${title} group info` : `View ${title}'s profile`}
         >
-          <UserAvatar
-            displayName={contact.displayName}
-            photoURL={contact.photoURL}
-            size={36}
-          />
+          {isGroup ? (
+            <GroupAvatar photoURL={group!.photoURL} size={36} />
+          ) : (
+            <UserAvatar
+              displayName={contact?.displayName}
+              photoURL={contact?.photoURL}
+              size={36}
+            />
+          )}
           <div className="flex flex-col min-w-0 text-left">
             <p className="text-sm font-semibold text-tsismis-text truncate">
-              {contact.displayName}
+              {title}
             </p>
-            {isBlocked && (
-              <p className="text-xs text-red-400/80 leading-none mt-0.5">Blocked</p>
+            {isGroup ? (
+              <p className="text-xs text-tsismis-hint leading-none mt-0.5">
+                {group!.memberCount} members
+              </p>
+            ) : (
+              isBlocked && (
+                <p className="text-xs text-red-400/80 leading-none mt-0.5">Blocked</p>
+              )
             )}
           </div>
         </button>
         <div className="flex items-center gap-1.5 shrink-0">
-          <CallButton callType="audio" onClick={onStartCall} disabled={isBlocked} />
-          <CallButton callType="video" onClick={onStartCall} disabled={isBlocked} />
+          <CallButton callType="audio" onClick={onStartCall} disabled={!isGroup && isBlocked} />
+          <CallButton callType="video" onClick={onStartCall} disabled={!isGroup && isBlocked} />
 
-          <div className="relative" ref={menuRef}>
-            <button
-              type="button"
-              onClick={() => setMenuOpen((v) => !v)}
-              className="h-8 w-8 flex items-center justify-center rounded-full text-tsismis-muted hover:text-tsismis-text hover:bg-white/5 transition-all cursor-pointer"
-              aria-label="More options"
-            >
-              <MoreVertical size={18} />
-            </button>
-            {menuOpen && (
-              <div className="absolute right-0 top-full mt-1 w-36 bg-tsismis-surface border border-tsismis-border rounded-xl shadow-xl z-30 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-                <button
-                  type="button"
-                  onClick={isBlocked ? (() => { setMenuOpen(false); onUnblock(); }) : handleBlockClick}
-                  className={`w-full flex items-center gap-2 whitespace-nowrap px-4 py-2.5 text-sm transition-all active:scale-[0.97] hover:bg-white/5 cursor-pointer ${
-                    isBlocked ? "text-[#2DC653]" : "text-red-400"
-                  }`}
-                >
-                  {isBlocked
-                    ? <><ShieldCheck size={14} /> Unblock</>
-                    : <><ShieldAlert size={14} /> Block</>}
-                </button>
-              </div>
-            )}
-          </div>
+          {!isGroup && (
+            <div className="relative" ref={menuRef}>
+              <button
+                type="button"
+                onClick={() => setMenuOpen((v) => !v)}
+                className="h-8 w-8 flex items-center justify-center rounded-full text-tsismis-muted hover:text-tsismis-text hover:bg-white/5 transition-all cursor-pointer"
+                aria-label="More options"
+              >
+                <MoreVertical size={18} />
+              </button>
+              {menuOpen && (
+                <div className="absolute right-0 top-full mt-1 w-36 bg-tsismis-surface border border-tsismis-border rounded-xl shadow-xl z-30 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                  <button
+                    type="button"
+                    onClick={isBlocked ? (() => { setMenuOpen(false); onUnblock?.(); }) : handleBlockClick}
+                    className={`w-full flex items-center gap-2 whitespace-nowrap px-4 py-2.5 text-sm transition-all active:scale-[0.97] hover:bg-white/5 cursor-pointer ${
+                      isBlocked ? "text-[#2DC653]" : "text-red-400"
+                    }`}
+                  >
+                    {isBlocked
+                      ? <><ShieldCheck size={14} /> Unblock</>
+                      : <><ShieldAlert size={14} /> Block</>}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
       </div>
@@ -128,7 +152,7 @@ export function ChatHeader({
               </div>
               <div>
                 <p className="text-sm font-semibold text-tsismis-text">
-                  Block {contact.displayName}?
+                  Block {contact?.displayName}?
                 </p>
                 <p className="text-xs text-tsismis-muted mt-1.5 leading-relaxed">
                   They won&apos;t be able to message or call you, and you won&apos;t see them in your contacts. You can unblock them anytime.

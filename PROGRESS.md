@@ -9,12 +9,13 @@ Read this file before starting any session. Update this file after completing an
 ## Project Status Summary
 
 ```
-Current Session   : Session 11 — Polish, Rules, and Deployment (Done)
+Current Session   : Session 12.1 — Group Chat Enhancements (Done)
 Overall Status    : Deployment Ready
-Last Updated      : 2026-05-30
-Previous Session  : Session 11.5 — Security: Email Verification (Done)
+Last Updated      : 2026-06-01
+Previous Session  : Session 12 — Group Chat (Done)
 Build Status      : Passed (Next.js 16.2.6, Turbopack)
-Deployment Status : Not Deployed — ready for Vercel
+Deployment Status : Not Deployed to Vercel — ready
+                    Firestore rules: DEPLOYED (Leave Group rule live)
 ```
 
 ---
@@ -34,6 +35,8 @@ Deployment Status : Not Deployed — ready for Vercel
 [x] Session 10 — Profile Creation and Profile Viewing
 [x] Session 11.5 — Security: Email Verification
 [x] Session 11 — Polish, Rules, and Deployment
+[x] Session 12 — Group Chat
+[x] Session 12.1 — Group Chat Enhancements (system messages, member notify, group avatar)
 ```
 
 ---
@@ -803,6 +806,157 @@ components/ContactProfileModal.tsx  modified  (active:scale-[0.97] on block/unbl
 
 ---
 
+## Session 12 — Group Chat
+
+**Scope:** Add group conversations (create + leave), generalize messaging/calls from a single receiver to a recipient list, show sender identity in group bubbles, simplified group read receipts (Seen only when every other member has read), and group audio/video calls via shared VDO.Ninja rooms. Generated group icon — no avatar upload. No post-creation add/remove of members (Phase 2).
+
+**Status:** `Done`
+
+**Files Created or Modified:**
+
+```
+types/conversation.ts               modified (type "direct" | "group"; added name, createdBy, participantInfo)
+lib/conversations.ts                modified (added createGroupConversation w/ cached participantInfo, leaveGroup)
+lib/messages.ts                     modified (sendMessage/sendMediaMessage take recipientIds[]; unreadIncrements helper; subscribeWithRetry resilience)
+lib/calls.ts                        modified (sendCallMessage takes recipientIds[])
+firestore.rules                     modified (conversations update rule allows a member to remove only themselves)
+components/MessageBubble.tsx        modified (otherUids[] for "seen by all"; sender avatar+name in groups)
+components/MessageList.tsx          modified (otherUids[], isGroup, participants map, typingName)
+components/MessageInput.tsx         modified (recipientIds[] instead of receiverId)
+components/ChatHeader.tsx           modified (optional group mode: group icon, "N members", no block menu)
+components/ConversationList.tsx     modified (renders group rows alongside direct contacts)
+components/ChatLayout.tsx           modified (group selection/creation/leave, participant profiles, generalized call + typing)
+components/CreateGroupModal.tsx     created  (name + multi-select members, ≥2 required)
+components/GroupInfoModal.tsx       created  (member list, group calls, Leave Group)
+```
+
+**Acceptance Criteria:**
+
+```
+[x] User can create a named group from 2+ contacts
+[x] Groups appear in the sidebar for all members, sorted by last activity
+[x] Group text + image + audio messages send and increment unread per member
+[x] Sender avatar + name shown on others' bubbles in groups
+[x] "Seen" shows only when every other member has read (simplified)
+[x] Typing indicator shows the typing member's name in groups
+[x] Group audio/video calls: all members get the incoming toast and join the same room
+[x] Audio group call keeps cameras off; video enables camera (unchanged callProvider rules)
+[x] Member can leave a group; they stop receiving its messages
+[x] Existing 1-on-1 chat, calls, receipts, blocking, contact requests unchanged
+[x] npm run build passes
+```
+
+**Notes:**
+
+```
+- The data model was already group-ready (participantIds, participantMap, unreadFor, typing,
+  readBy all scale to N). Direct chat is now effectively "a group of 2": single-recipient
+  paths were generalized to recipientIds[].
+- Group conversation IDs are random (doc(collection(db,"conversations"))); direct chats keep
+  the deterministic sorted-UID join.
+- Group messages write receiverId: "" (the message rule only requires the key to be present),
+  so isValidMessage needed no change. unreadFor is incremented per recipient.
+- Only one rules change: the conversations update rule now also permits a member to remove
+  ONLY themselves (subset of old participantIds, size-1, requester absent from new list) for
+  Leave Group. lastMessage/typing/unread updates still keep participantIds unchanged.
+- subscribeConversations already uses array-contains and sorts client-side — no new index.
+- foreignContacts fetch now ignores group conversations so group members don't appear as
+  phantom direct-chat rows in the sidebar.
+- Member display names/avatars are cached onto the conversation doc (participantInfo map) at
+  group creation, so sender identity, the member list, and typing names render instantly with
+  no "Member" fallback flicker. The live getUserDoc fetch still runs and is overlaid on top of
+  the cached values, so a member who later renames themselves is reflected once their fetch
+  lands. participantInfo.{uid} is also cleared on leaveGroup. No rules change needed (the
+  create rule permits extra keys; the conversations update rule has no affectedKeys restriction).
+- Group avatar is a generated Users icon over the brand gradient (no upload).
+- IncomingCallToast needed no change — it already subscribes per conversation (groups included)
+  and filters out the sender.
+- npm run build passed (Next.js 16.2.6, Turbopack). Zero type errors.
+- Firestore rules deployed successfully (firebase deploy --only firestore:rules).
+- FIX (post-implementation): "permission-denied in snapshot listener" appeared right after
+  creating a group. Cause: the messages read rule is document-independent
+  (get(parentConversation).participantIds), so Firestore evaluates it on subscribe even with
+  zero messages, running a server-side get() of the just-created parent. On a brand-new
+  conversation (always the case for a group's random-ID doc) that get() can briefly miss the
+  parent on the serving replica → permission-denied, which terminates the listener. Fixed by
+  subscribeWithRetry() in lib/messages.ts: subscribeMessages/subscribeLatestMessages now retry
+  transient permission-denied/unavailable errors with backoff (max 6 attempts) so the listener
+  self-heals instead of dying. No rules change needed.
+```
+
+**Issues / Blockers:**
+
+```
+- None
+```
+
+---
+
+## Session 12.1 — Group Chat Enhancements
+
+**Scope:** Three follow-ups to Session 12: (1) notify added members that they were added to a
+group, (2) show who created the group and who was added when the thread is first opened (system
+messages, like modern chat apps), and (3) enable group avatar uploading.
+
+**Status:** `Done`
+
+**Files Created or Modified:**
+
+```
+types/message.ts                    modified (added "system" message type)
+types/conversation.ts               modified (added photoURL, avatarPublicId for group avatar)
+firestore.rules                     modified (isValidMessage accepts type "system" with text)
+lib/conversations.ts                modified (createGroupConversation seeds system messages +
+                                    unread/preview; accepts photoURL/avatarPublicId; added updateGroupAvatar)
+components/GroupAvatar.tsx          created  (group photo or Users-icon gradient fallback)
+components/MessageBubble.tsx        modified (centered muted pill rendering for "system" messages)
+components/CreateGroupModal.tsx     modified (optional group photo upload via Cloudinary)
+components/GroupInfoModal.tsx       modified (uses GroupAvatar; tap avatar to change group photo)
+components/ChatHeader.tsx           modified (group mode uses GroupAvatar; accepts photoURL)
+components/ConversationList.tsx     modified (group rows use GroupAvatar)
+components/ChatLayout.tsx           modified (threads photoURL through; handleUpdateGroupAvatar)
+```
+
+**Acceptance Criteria:**
+
+```
+[x] Added members are notified: the new group appears in their sidebar with an unread badge
+    and a "X added Y, Z" preview
+[x] Opening a group shows system messages: 'X created the group "Name"' and 'X added Y and Z'
+[x] System messages render as centered, muted pills (no bubble/avatar/receipts)
+[x] Creator can attach a group photo during creation (optional)
+[x] Any member can change the group photo from the group info modal
+[x] Group photo shows in the header, sidebar, info modal, and create modal; falls back to a
+    generated group icon when absent
+[x] npm run build passes; Firestore rules deployed
+```
+
+**Notes:**
+
+```
+- System messages: type "system" with a text field. The messages create rule already requires
+  senderId == auth.uid and membership; isValidMessage now accepts "system" (text required).
+  Written client-side by the creator right after the group doc is created.
+- Two system messages are seeded ("created the group", "added ..."), but unreadFor is incremented
+  by 1 per added member — the group shows as a single new notification, not two.
+- Group avatar reuses the existing uploadAvatar() Cloudinary helper (unsigned preset, image
+  endpoint). photoURL/avatarPublicId stored on the conversation doc. No rules change needed for
+  avatar updates — the conversations update rule has no affectedKeys restriction and keeps
+  participantIds unchanged on an avatar edit.
+- GroupAvatar centralizes the photo-or-icon fallback so header/sidebar/modals stay consistent.
+- Existing groups created before this change have no photoURL → render the icon fallback, and
+  no system messages (only new groups seed them). Fully backward compatible.
+- npm run build passed (Next.js 16.2.6, Turbopack). Firestore rules deployed.
+```
+
+**Issues / Blockers:**
+
+```
+- None
+```
+
+---
+
 ## Final Testing Log
 
 ### Local Development Test
@@ -908,7 +1062,11 @@ Notes       :
 
 - Video file uploads deferred to Phase 2 (Cloudinary free-tier size risk).
 
-- Group conversations, push notifications, call ringtones: Phase 2.
+- Group conversations: implemented in Session 12 (create + leave). Phase 2 for groups:
+  adding/removing other members after creation, admin/owner roles, uploaded group avatars,
+  and detailed per-member ("seen by X, Y") receipts.
+
+- Push notifications, call ringtones: Phase 2.
 
 - Block + contact request interaction: if User A blocks User B, User B can still
   send a contact request and User A can still accept it — but User B will not appear

@@ -7,11 +7,18 @@ import { subscribeMessages, markMessagesAsRead } from "@/lib/messages";
 import type { Message } from "@/types/message";
 import type { CallType } from "@/lib/callProvider";
 
+interface ParticipantInfo {
+  displayName: string;
+  photoURL?: string;
+}
+
 interface MessageListProps {
   conversationId: string;
   currentUid: string;
-  otherUid: string;
-  contactName?: string;
+  otherUids: string[];
+  isGroup?: boolean;
+  participants?: Map<string, ParticipantInfo>;
+  typingName?: string;
   isTyping?: boolean;
   onJoinCall?: (callUrl: string, callType: CallType, messageId: string) => void;
 }
@@ -19,8 +26,10 @@ interface MessageListProps {
 export function MessageList({
   conversationId,
   currentUid,
-  otherUid,
-  contactName,
+  otherUids,
+  isGroup = false,
+  participants,
+  typingName,
   isTyping,
   onJoinCall,
 }: MessageListProps) {
@@ -86,16 +95,22 @@ export function MessageList({
 
   return (
     <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2 bg-tsismis-bg">
-      {messages.map((msg) => (
-        <MessageBubble
-          key={msg.id}
-          message={msg}
-          isOwn={msg.senderId === currentUid}
-          otherUid={otherUid}
-          onJoinCall={onJoinCall}
-          onMediaLoad={scrollToBottom}
-        />
-      ))}
+      {messages.map((msg) => {
+        const sender = isGroup ? participants?.get(msg.senderId) : undefined;
+        return (
+          <MessageBubble
+            key={msg.id}
+            message={msg}
+            isOwn={msg.senderId === currentUid}
+            otherUids={otherUids}
+            isGroup={isGroup}
+            senderName={sender?.displayName}
+            senderPhotoURL={sender?.photoURL}
+            onJoinCall={onJoinCall}
+            onMediaLoad={scrollToBottom}
+          />
+        );
+      })}
       {isTyping && (
         <div className="flex items-center gap-2 px-1 py-1 animate-in fade-in duration-200">
           <div className="flex gap-1 items-center bg-tsismis-surface border border-tsismis-border rounded-2xl rounded-bl-sm px-3 py-2">
@@ -104,7 +119,7 @@ export function MessageList({
             <span className="w-1.5 h-1.5 rounded-full bg-tsismis-muted animate-bounce [animation-delay:300ms]" />
           </div>
           <span className="text-[10px] text-tsismis-hint italic">
-            {contactName ?? "Someone"} is typing…
+            {typingName ?? "Someone"} is typing…
           </span>
         </div>
       )}
